@@ -1,0 +1,1277 @@
+---
+  title: "ms-specparam regreesion and plotting code"
+---
+  
+  Read in data from tables and organize it to explore in regressions 
+See how it relates to age
+
+
+Note variables names represent the following algorithms
+Van == default specparam
+BIC == model-selection specparam
+SB == conservative specparam
+
+See paper for details
+
+```{r cleaning data and demographics}
+library(ggplot2)
+library(dplyr)
+library(BayesFactor)
+library(ggseg)
+#library(ggsegDesterieux)
+library(colorspace)
+
+cbbPalette= c("#4f89e0", "#f5ec6c",'#156605',"#76D7C4","#268236", '#4d3d87','#593d80', '#3b49e3')
+
+# pool together demographics from all parts
+demo=read.csv('~/Documents/CAMCAN_outputs/CAMCAN_Analysis/standard_data.csv')
+demo2=read.csv('~/Desktop/Xiaobo_age_data/fulldemo_fromCAMCAN_test.csv')
+demo$CCID=paste('sub',demo$CCID, sep = '_')
+ids=read.csv('~/Documents/CAMCAN_outputs/CAMCAN_Analysis/subject_codes.csv')
+index=demo$CCID %in% ids$Ids
+demo=demo[index,]
+
+demo$Group[demo$Age>=18 & demo$Age <45]= "young adult"
+demo$Group[demo$Age>=45 & demo$Age <65]= "adult"
+demo$Group[demo$Age>=65 & demo$Age <90]= "older adult"
+
+full_demo=read.csv('~/Documents/CAMCAN_outputs/approved_data.csv')
+full_demo$CCID=paste('sub',full_demo$CCID, sep = '_')
+index=full_demo$CCID %in% ids$Ids
+full_demo=full_demo[index,]
+
+# read in csv of slopes for each hyperparameter setting
+exponent_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_exponent_VanREV.csv', header = FALSE)
+exponent_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_exponent_BICREV.csv', header = FALSE)
+exponent_SB= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_exponent_SB.csv', header = FALSE)
+
+# read in csv of offset
+offset_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_offset_VanREV.csv', header = FALSE)
+offset_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_offset_BICREV.csv', header = FALSE)
+offset_SB= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_offset_SB.csv', header = FALSE)
+
+# avg MSE of spectral model fit
+MSE_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fit_mse_VanREV.csv', header = FALSE)
+MSE_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fit_mse_BICREV.csv', header = FALSE)
+BF_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/BF_BICREV.csv', header = FALSE)
+
+peak_cf_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/Peak_center_freq_VanREV.csv', header = FALSE)
+peak_cf_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/Peak_center_freq_BICREV.csv', header = FALSE)
+
+peak_amp_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/Amplitude_freq_VanREV.csv', header = FALSE)
+peak_amp_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/Amplitude_freq_BICREV.csv', header = FALSE)
+
+peak_std_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/Std_freq_VanREV.csv', header = FALSE)
+peak_std_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/Std_freq_BICREV.csv', header = FALSE)
+
+# organized atlas info (summary of ROI)
+atlas= read.csv('~/Desktop/Xiaobo_age_data/Destrieux_atlas.csv')
+
+
+
+```
+
+MSE is significantly lower in BIC FOOOF but this does not interact with age
+
+
+```{r plot model fit compare groups BF brain map}
+
+someData3= tidyr::tibble(atlas$region, colMeans(MSE_Van), atlas$hemi, 'Vanilla')
+someData2= tidyr::tibble(atlas$region, colMeans(MSE_BIC), atlas$hemi, 'BIC')
+colnames(someData2)= c('region', 'MSE', 'hemi', 'algorithm')
+colnames(someData3)= c('region', 'MSE', 'hemi', 'algorithm')
+someData3=rbind(someData3, someData2)
+someData3= someData3[!is.na(someData3$algorithm),]
+someData3$algorithm= factor(someData3$algorithm, levels = c(NA,'Vanilla', 'BIC'))
+someData3$region= factor(someData3$region)
+
+someData3 %>%
+  group_by(algorithm) %>% 
+  brain_join(desterieux) %>% 
+  reposition_brain(hemi ~ side) %>% 
+  ggplot(aes(fill =MSE)) + 
+  geom_sf(show.legend = TRUE) + 
+  facet_wrap( ~ algorithm) +  scale_fill_continuous_sequential(palette= 'Sunset', rev= FALSE) +  scale_color_continuous_sequential(palette= 'Sunset', rev= FALSE) +
+  theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Brain_map_MSE_compare.pdf', device = "pdf")
+
+
+
+# box plots of MSE model fit
+data4plot= data.frame(MSE= c(rowMeans(MSE_Van), rowMeans(MSE_BIC)),
+                      algorithm= factor(x = rep(c('liberal','ms-'), each=606), levels = c('liberal', 'ms-')) , age= factor(demo$Group, c('young adult', 'adult', 'older adult')), age_raw= demo$Age)
+
+ggplot(data4plot, aes(algorithm, MSE, fill=algorithm)) + 
+  ggdist::stat_halfeye(adjust = .5, width = .5, .width = 0, justification = -.5, alpha=0.5, point_alpha= 0) + 
+  geom_boxplot(width = .2, outlier.shape = NA, outlier.size = 0.001, colour= '#888888') + ggpubr::theme_classic2() + scale_fill_manual(values=cbbPalette) + coord_cartesian(ylim = c(0, 0.008))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_boxplot_MSE_compare_withSRAWBERRY2.pdf', device = "pdf")
+
+
+RVAideMemoire::perm.t.test(rowMeans(MSE_BIC),rowMeans(MSE_Van), nperm=1000)
+
+RVAideMemoire::perm.t.test(data4plot$MSE[data4plot$algorithm=='ms-'],data4plot$MSE[data4plot$algorithm=='liberal'], nperm=1000, paired=TRUE)
+
+#t = -48.11, p-value = 0.001998
+
+
+SDpooled = sqrt((sd(data4plot$MSE[data4plot$algorithm=='ms-'], na.rm = TRUE)^2 + sd(data4plot$MSE[data4plot$algorithm=='liberal'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(data4plot$MSE[data4plot$algorithm=='ms-'], na.rm = TRUE) - mean(data4plot$MSE[data4plot$algorithm=='liberal'], na.rm = TRUE)) /SDpooled
+# -1.804185
+
+# plot Bayes factor for periodic activity 
+someData3= data.frame(region= atlas$region, BF= log10(colMeans(BF_BIC)), hemi= atlas$hemi, algorithm='BIC')
+colnames(someData3)= c('region', 'BF', 'hemi', 'algorithm')
+
+someData3$BF[someData3$BF >1] =1
+someData3$BF[someData3$BF < -25] =-25
+
+someData3= na.omit(someData3)
+someData3= someData3[!is.na(someData3$region),]
+ggplot(someData3) +
+  geom_brain(atlas = desterieux, 
+             position = position_brain(hemi ~ side),
+             aes(fill = BF)) +  scale_fill_continuous_sequential(palette= 'Terrain', rev= TRUE, limits= c(-25,1)) +  scale_color_continuous_sequential(palette= 'Terrain', rev= TRUE) + theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Brain_map_BF.pdf', device = "pdf")
+
+```
+
+
+
+
+```{r plot fmse}
+
+fmse_Van=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fmse_mean_VanREV.csv', header = FALSE)
+fmse_BIC=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fmse_mean_BICREV.csv', header = FALSE)
+fmse_SB=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fmse_mean_SB.csv', header = FALSE)
+
+stderror <- function(x) sd(x)/sqrt(length(x))
+
+data4plot= data.frame(fmse= c(colMeans(fmse_Van),colMeans(fmse_BIC)), sd_fmse= c(1.96*apply(fmse_Van, 2, stderror),1.96*apply(fmse_BIC, 2, stderror)),
+                      algorithm= factor(x = rep(c('Vanilla', 'BIC'), each=79), levels = c('Vanilla', 'BIC')), freq=  seq(1,40,0.5))
+
+
+ggplot(data4plot, aes(x= freq, y = fmse, fill= algorithm,colour= algorithm, ymin=fmse-sd_fmse, ymax=fmse+sd_fmse)) + geom_ribbon(alpha=0.5, colour= NA) + geom_line() + ggpubr::theme_classic2() + coord_cartesian(xlim = c(1, 40) ) + scale_fill_manual(values=cbbPalette[c(1,3)]) + scale_color_manual(values=cbbPalette[c(1,3)])
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_FMSE_plot.pdf', device = "pdf")
+
+
+```
+
+```{r plot peak count per ROI}
+
+
+peaks_count_total_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/peak_count_per_ROI_VanREV.csv', header = FALSE)
+
+peaks_count_total_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/peak_count_per_ROI_BICREV.csv', header = FALSE)
+
+
+someData3= tidyr::tibble(atlas$region, colMeans(peaks_count_total_Van), atlas$hemi, 'Vanilla')
+someData2= tidyr::tibble(atlas$region, colMeans(peaks_count_total_BIC), atlas$hemi, 'BIC')
+colnames(someData2)= c('region', 'peak_count', 'hemi', 'algorithm')
+colnames(someData3)= c('region', 'peak_count', 'hemi', 'algorithm')
+someData3=rbind(someData3, someData2)
+someData3= someData3[!is.na(someData3$algorithm),]
+someData3$algorithm= factor(someData3$algorithm, levels = c(NA,'Vanilla', 'BIC'))
+someData3$region= factor(someData3$region)
+
+someData3 %>%
+  group_by(algorithm) %>% 
+  brain_join(desterieux) %>% 
+  reposition_brain(hemi ~ side) %>% 
+  ggplot(aes(fill =peak_count)) + 
+  geom_sf(show.legend = TRUE) + 
+  facet_wrap( ~ algorithm) +  scale_fill_continuous_sequential(palette= 'Sunset', rev= FALSE) +  scale_color_continuous_sequential(palette= 'Sunset', rev= FALSE) +
+  theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEWBrain_map_number_of_peaks_fit.pdf', device = "pdf")
+
+data4plot=  someData3[1:148,]
+data4plot$peak_count = someData3$peak_count[someData3$algorithm=='BIC']- someData3$peak_count[someData3$algorithm=='Vanilla']
+
+data4plot %>%
+  group_by(algorithm) %>% 
+  brain_join(desterieux) %>% 
+  reposition_brain(hemi ~ side) %>% 
+  ggplot(aes(fill =peak_count)) + 
+  geom_sf(show.legend = TRUE) + 
+  facet_wrap( ~ algorithm) +  scale_fill_continuous_sequential(palette= 'Blues 3', rev= FALSE) +  scale_color_continuous_sequential(palette= 'Blues 3', rev= FALSE) +
+  theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Brain_map_number_of_peaks_fit_difference_between_alogrithms.pdf', device = "pdf")
+
+
+ggplot(someData3, aes(algorithm, peak_count, fill=algorithm)) + 
+  ggdist::stat_halfeye(adjust = .5, width = .5, .width = 0, justification = -.5, alpha=0.5, point_alpha=0) + 
+  geom_boxplot(width = .2, outlier.shape = NA, colour= '#888888') + ggpubr::theme_classic2() + scale_fill_manual(values=cbbPalette)
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_boxplot_peak_count_compare.pdf', device = "pdf")
+
+
+RVAideMemoire::perm.t.test(rowMeans(peaks_count_total_BIC),rowMeans(peaks_count_total_Van), nperm=1000, paired=TRUE)
+
+# t = -61.41, p-value = 0.001998
+SDpooled = sqrt((sd(rowMeans(peaks_count_total_BIC), na.rm = TRUE)^2 + sd(rowMeans(peaks_count_total_Van), na.rm = TRUE)^2)/2)
+Cohen_D = (mean(rowMeans(peaks_count_total_BIC), na.rm = TRUE) - mean(rowMeans(peaks_count_total_Van), na.rm = TRUE)) /SDpooled
+# -0.7498627
+
+# run regression to check if fewer peaks were fit by age group 
+tidyr::tibble(c(demo$Age), c(rowMeans(peaks_count_total_BIC),rowMeans(peaks_count_total_Van)))
+```
+
+
+
+```{r plot exponents and offset }
+
+
+someData3= tidyr::tibble(atlas$region, colMeans(exponent_Van), atlas$hemi, 'Vanilla')
+someData2= tidyr::tibble(atlas$region, colMeans(exponent_BIC), atlas$hemi, 'BIC')
+colnames(someData2)= c('region', 'exponent', 'hemi', 'algorithm')
+colnames(someData3)= c('region', 'exponent', 'hemi', 'algorithm')
+someData3=rbind(someData3, someData2)
+someData3= someData3[!is.na(someData3$algorithm),]
+someData3$algorithm= factor(someData3$algorithm, levels = c(NA,'Vanilla', 'BIC'))
+someData3$region= factor(someData3$region)
+
+someData3 %>%
+  group_by(algorithm) %>% 
+  brain_join(desterieux) %>% 
+  reposition_brain(hemi ~ side) %>% 
+  ggplot(aes(fill =exponent)) + 
+  geom_sf(show.legend = TRUE) + 
+  facet_wrap( ~ algorithm) +  scale_fill_continuous_sequential(palette= 'Sunset', rev= FALSE) +  scale_color_continuous_sequential(palette= 'Sunset', rev= FALSE) +
+  theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Brain_map_exponent_compare.pdf', device = "pdf")
+
+
+data4plot=  someData3[1:148,]
+data4plot$exponent = someData3$exponent[someData3$algorithm=='BIC']- someData3$exponent[someData3$algorithm=='Vanilla']
+
+data4plot %>%
+  group_by(algorithm) %>% 
+  brain_join(desterieux) %>% 
+  reposition_brain(hemi ~ side) %>% 
+  ggplot(aes(fill =exponent)) + 
+  geom_sf(show.legend = TRUE) + 
+  facet_wrap( ~ algorithm) + scale_fill_gradient2(low = "#4f89e0", mid = "#FCF7F4", high = "#156605", midpoint = 0.0, limits= c(-0.15, 0.15)) +    scale_fill_gradient2(low = "#4f89e0", mid = "#FCF7F4", high = "#156605", midpoint = 0.0, limits= c(-0.15, 0.15)) +
+  theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Brain_map_exponent_difference_between_alogrithms.pdf', device = "pdf")
+
+
+
+
+# test sig 
+
+data4plot= data.frame(exponent= c(rowMeans(exponent_Van),rowMeans(exponent_BIC)),
+                      algorithm= factor(x = rep(c('Vanilla', 'BIC'), each=606), levels = c('Vanilla', 'BIC')) , age= factor(demo$Group, c('young adult', 'adult', 'older adult')), age_raw= demo$Age)
+
+ggplot(data4plot, aes(age, exponent, fill=algorithm)) + 
+  ggdist::stat_halfeye(adjust = .5, width = .5, .width = 0, justification = -.5, alpha=0.5, point_alpha=0) + 
+  geom_boxplot(width = .2, outlier.shape = NA, colour= '#888888') + ggpubr::theme_classic2() + scale_fill_manual(values=cbbPalette) + ylab("exponent")
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_boxplot_exponent_compare_pergroup.pdf', device = "pdf")
+
+ggplot(data4plot, aes(algorithm, exponent, fill=algorithm)) + 
+  ggdist::stat_halfeye(adjust = .5, width = .5, .width = 0, justification = -.5, alpha=0.5, point_alpha=0) + 
+  geom_boxplot(width = .2, outlier.shape = NA, colour= '#888888') + ggpubr::theme_classic2() + scale_fill_manual(values=cbbPalette) + ylab("exponent")
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_boxplot_exponent_compare.pdf', device = "pdf")
+
+
+
+#offset ##
+someData3= tidyr::tibble(atlas$region, colMeans(offset_Van), atlas$hemi, 'Vanilla')
+someData2= tidyr::tibble(atlas$region, colMeans(offset_BIC), atlas$hemi, 'BIC')
+colnames(someData2)= c('region', 'offset', 'hemi', 'algorithm')
+colnames(someData3)= c('region', 'offset', 'hemi', 'algorithm')
+someData3=rbind(someData3, someData2)
+someData3= someData3[!is.na(someData3$algorithm),]
+someData3$algorithm= factor(someData3$algorithm, levels = c(NA,'Vanilla', 'BIC'))
+someData3$region= factor(someData3$region)
+
+someData3 %>%
+  group_by(algorithm) %>% 
+  brain_join(desterieux) %>% 
+  reposition_brain(hemi ~ side) %>% 
+  ggplot(aes(fill =offset)) + 
+  geom_sf(show.legend = TRUE) + 
+  facet_wrap( ~ algorithm) +  scale_fill_continuous_sequential(palette= 'Sunset', rev= FALSE) +  scale_color_continuous_sequential(palette= 'Sunset', rev= FALSE) +
+  theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Brain_map_offset_compare.pdf', device = "pdf")
+
+
+data4plot=  someData3[1:148,]
+data4plot$offset = someData3$offset[someData3$algorithm=='BIC']- someData3$offset[someData3$algorithm=='Vanilla']
+
+data4plot %>%
+  group_by(algorithm) %>% 
+  brain_join(desterieux) %>% 
+  reposition_brain(hemi ~ side) %>% 
+  ggplot(aes(fill =offset)) + 
+  geom_sf(show.legend = TRUE) + 
+  facet_wrap( ~ algorithm) + scale_fill_gradient2(low = "#4f89e0", mid = "#FCF7F4", high = "#156605", midpoint = 0.0, limits= c(-0.3, 0.3)) +    scale_fill_gradient2(low = "#4f89e0", mid = "#FCF7F4", high = "#156605", midpoint = 0.0, limits= c(-0.3, 0.3)) +
+  theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Brain_map_offset_difference_between_alogrithms.pdf', device = "pdf")
+
+
+
+# test sig offset
+
+data4plot= data.frame(offset= c(rowMeans(offset_Van),rowMeans(offset_BIC)),
+                      algorithm= factor(x = rep(c('Vanilla', 'BIC'), each=606), levels = c('Vanilla', 'BIC')) , age= factor(demo$Group, c('young adult', 'adult', 'older adult')), age_raw= demo$Age)
+
+ggplot(data4plot, aes(age, offset, fill=algorithm)) + 
+  ggdist::stat_halfeye(adjust = .5, width = .5, .width = 0, justification = -.5, alpha=0.5, point_alpha=0) + 
+  geom_boxplot(width = .2, outlier.shape = NA, colour= '#888888') + ggpubr::theme_classic2() + scale_fill_manual(values=cbbPalette) + ylab("offset")
+
+ggplot(data4plot, aes(algorithm, offset, fill=algorithm)) + 
+  ggdist::stat_halfeye(adjust = .5, width = .5, .width = 0, justification = -.5, alpha=0.5, point_alpha=0) + 
+  geom_boxplot(width = .2, outlier.shape = NA, colour= '#888888') + ggpubr::theme_classic2() + scale_fill_manual(values=cbbPalette)+ ylab("offset")
+
+
+
+
+```
+
+
+```{r make interaction aperiodic effect plot}
+
+data4plot= data.frame(MSE= c(rowMeans(exponent_Van), rowMeans(exponent_BIC)),
+                      algorithm= factor(x = rep(c('Vanilla', 'BIC'), each=606), levels = c('Vanilla', 'BIC')) , age= factor(demo$Group, c('young adult', 'adult', 'older adult')), age_raw= demo$Age)
+
+ggplot(data4plot, aes(x=data4plot$age_raw , y = data4plot$MSE, fill=data4plot$algorithm, colour=data4plot$algorithm)) + 
+  geom_point(aes(x=data4plot$age_raw , y = data4plot$MSE, alpha =0.5)) +
+  stat_smooth(aes(x=data4plot$age_raw , y = data4plot$MSE),method = "lm") +  scale_colour_manual(values=cbbPalette[c(1,3)]) +
+  scale_fill_manual(values=cbbPalette[c(1,3)])  + ggpubr::theme_classic2() +   xlab("age") + ylab("exponent (units)")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold"), legend.position = "none") 
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Regression_exponent_with_age_interaction_all_models.pdf', device = "pdf", width = 5, height = 5)
+
+
+
+data4plot= data.frame(MSE= c(rowMeans(offset_Van), rowMeans(offset_BIC)),
+                      algorithm= factor(x = rep(c('Vanilla','BIC'), each=606), levels = c('Vanilla', 'BIC')) , age= factor(demo$Group, c('young adult', 'adult', 'older adult')), age_raw= demo$Age)
+
+ggplot(data4plot, aes(x=data4plot$age_raw , y = data4plot$MSE, fill=data4plot$algorithm, colour=data4plot$algorithm)) + 
+  geom_point(aes(x=data4plot$age_raw , y = data4plot$MSE, alpha =0.5)) +
+  stat_smooth(aes(x=data4plot$age_raw , y = data4plot$MSE),method = "lm") +  scale_colour_manual(values=cbbPalette[c(1,3)]) +
+  scale_fill_manual(values=cbbPalette[c(1,3)])  + ggpubr::theme_classic2() +   xlab("age") + ylab("offset (units)")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold"), legend.position = "none") 
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Regression_offset_with_age_interaction_all_models.pdf', device = "pdf", width = 5, height = 5)
+
+
+
+```
+
+
+
+
+
+
+```{r run stats on exponents, offset, MSE, peak count }
+
+
+data4plot=data.frame(exponent=c(stack(exponent_Van)[,1], stack(exponent_BIC)[,1]), 
+           algorithm= rep(c('Vanilla', 'BIC'), each=606*148),
+           age= demo$Group, age_raw= demo$Age, subID= demo$CCID)
+
+data4plot$algorithm= factor(data4plot$algorithm, levels = c('Vanilla', 'BIC'))
+data4plot$age= factor(data4plot$age, levels = c('young adult', 'adult', 'older adult'))
+
+
+data4plot=data.frame(exponent=c(rowMeans(exponent_Van), rowMeans(exponent_BIC)), 
+           algorithm= rep(c('Vanilla', 'BIC'), each=606),
+           age= demo$Group, age_raw= demo$Age, subID= demo$CCID)
+
+data4plot$algorithm= factor(data4plot$algorithm, levels = c('Vanilla', 'BIC'))
+data4plot$age= factor(data4plot$age, levels = c('young adult', 'adult', 'older adult'))
+
+data4plot$exponent= scale(data4plot$exponent)
+data4plot$age_raw= scale(data4plot$age_raw)
+lm0=lme4::lmer(exponent ~(1 | subID), data4plot)
+lm1=lme4::lmer(exponent ~age_raw + (1 | subID), data4plot)
+lm11=lme4::lmer(exponent ~algorithm + (1 | subID), data4plot)
+lm2=lme4::lmer(exponent ~algorithm + age_raw + (1 | subID), data4plot)
+lm3=lme4::lmer(exponent ~algorithm *age_raw + (1 | subID), data4plot)
+
+anova(lm0,lm1,lm2,lm3)
+sjPlot::tab_model(lm3)
+
+exp((BIC(lm2) - BIC(lm3))/2) # 0.3368224
+exp((BIC(lm0) - BIC(lm1))/2) #  1.386513e+31
+exp((BIC(lm0) - BIC(lm11))/2) # 0.7276648
+
+lmVan=lm(exponent ~age_raw , data4plot[data4plot$algorithm == 'Vanilla',])
+sjPlot::tab_model(lmVan)
+lmVan=lm(exponent ~age_raw , data4plot[data4plot$algorithm == 'BIC',])
+sjPlot::tab_model(lmVan)
+
+
+## offset 
+
+
+data4plot=data.frame(offset=c(rowMeans(offset_Van), rowMeans(offset_BIC)), 
+           algorithm= rep(c('Vanilla', 'BIC'), each=606),
+           age= demo$Group, age_raw= demo$Age, subID= demo$CCID)
+
+data4plot$algorithm= factor(data4plot$algorithm, levels = c('Vanilla', 'BIC'))
+data4plot$age= factor(data4plot$age, levels = c('young adult', 'adult', 'older adult'))
+
+
+data4plot$offset= scale(data4plot$offset)
+data4plot$age_raw= scale(data4plot$age_raw)
+lm0=lme4::lmer(offset ~(1 | subID), data4plot)
+lm1=lme4::lmer(offset ~age_raw + (1 | subID), data4plot)
+lm11=lme4::lmer(offset ~algorithm + (1 | subID), data4plot)
+lm2=lme4::lmer(offset ~algorithm + age_raw + (1 | subID), data4plot)
+lm3=lme4::lmer(offset ~algorithm *age_raw + (1 | subID), data4plot)
+
+anova(lm0,lm1,lm2,lm3)
+sjPlot::tab_model(lm3)
+
+exp((BIC(lm2) - BIC(lm3))/2)
+exp((BIC(lm0) - BIC(lm1))/2)
+exp((BIC(lm0) - BIC(lm11))/2)
+
+lmVan=lm(offset ~age_raw , data4plot[data4plot$algorithm == 'Vanilla',])
+sjPlot::tab_model(lmVan)
+lmVan=lm(offset ~age_raw , data4plot[data4plot$algorithm == 'BIC',])
+sjPlot::tab_model(lmVan)
+
+
+```
+
+
+
+```{r alpha beta peak paramters  }
+
+cbbPalette= c("#4f89e0", "#f5ec6c",'#156605',"#76D7C4","#268236", '#4d3d87','#593d80', '#3b49e3')
+
+data4plot=data.frame(center_freq=c(stack(peak_cf_Van)[,1], stack(peak_cf_BIC)[,1]), 
+           algorithm= rep(c('Vanilla', 'BIC'), each=606*888),
+           age= demo$Group, age_raw= demo$Age, subID= demo$CCID)
+data4plot$algorithm= factor(data4plot$algorithm, levels = c('Vanilla', 'BIC'))
+data4plot$age= factor(data4plot$age, levels = c('young adult', 'adult', 'older adult'))
+
+data4plot=data4plot[data4plot$center_freq >= 8 & data4plot$center_freq < 30, ]
+data4plot= data4plot[!is.na(data4plot$center_freq),]
+
+test=data4plot %>% group_by(subID, algorithm) %>% summarise(peak_count = n())
+
+test$ageGroup= rep(demo$Group,2)
+
+BIC_peaks=test$peak_count[test$algorithm=='BIC' & test$ageGroup == 'young adult']
+Van_peaks=test$peak_count[test$algorithm=='Vanilla' & test$ageGroup=='young adult']
+RVAideMemoire::perm.t.test(BIC_peaks, Van_peaks, nperm=1000, paired=FALSE)
+# t = -8.21, p-value = 0.001998
+# mean BIC  342.6078    Van 386.6716 
+
+SDpooled = sqrt((sd(BIC_peaks, na.rm = TRUE)^2 + sd(Van_peaks, na.rm = TRUE)^2)/2)
+Cohen_D = (mean(BIC_peaks, na.rm = TRUE) - mean(Van_peaks, na.rm = TRUE)) /SDpooled
+# Cohen_D -0.8129131
+
+
+BIC_peaks=test$peak_count[test$algorithm=='BIC' & test$ageGroup == 'adult']
+Van_peaks=test$peak_count[test$algorithm=='Vanilla' & test$ageGroup=='adult']
+RVAideMemoire::perm.t.test(BIC_peaks, Van_peaks, nperm=1000, paired=FALSE)
+# t = -7.2519, p-value = 0.001998
+# mean BIC  343.2474    Van 385.0052 
+
+SDpooled = sqrt((sd(BIC_peaks, na.rm = TRUE)^2 + sd(Van_peaks, na.rm = TRUE)^2)/2)
+Cohen_D = (mean(BIC_peaks, na.rm = TRUE) - mean(Van_peaks, na.rm = TRUE)) /SDpooled
+# Cohen_D -0.7363186
+
+BIC_peaks=test$peak_count[test$algorithm=='BIC' & test$ageGroup == 'older adult']
+Van_peaks=test$peak_count[test$algorithm=='Vanilla' & test$ageGroup=='older adult']
+RVAideMemoire::perm.t.test(BIC_peaks, Van_peaks, nperm=1000, paired=FALSE)
+# t = -7.6292, p-value = 0.001998
+# mean BIC  348.2644    Van 390.1442 
+
+SDpooled = sqrt((sd(BIC_peaks, na.rm = TRUE)^2 + sd(Van_peaks, na.rm = TRUE)^2)/2)
+Cohen_D = (mean(BIC_peaks, na.rm = TRUE) - mean(Van_peaks, na.rm = TRUE)) /SDpooled
+# Cohen_D -0.7481067
+
+```
+
+
+```{r plot peak paramters (histograms and stats) }
+
+cbbPalette= c("#4f89e0", "#f5ec6c",'#156605',"#76D7C4","#268236", '#4d3d87','#593d80', '#3b49e3')
+
+
+data4plot=data.frame(center_freq=c(stack(peak_cf_Van)[,1], stack(peak_cf_BIC)[,1]), 
+           algorithm= rep(c('Vanilla', 'BIC'), each=606*888),
+           age= demo$Group, age_raw= demo$Age, subID= demo$CCID)
+
+data4plot$algorithm= factor(data4plot$algorithm, levels = c('Vanilla', 'BIC'))
+data4plot$age= factor(data4plot$age, levels = c('young adult', 'adult', 'older adult'))
+
+RVAideMemoire::perm.t.test(data4plot$center_freq[data4plot$algorithm=='BIC'],data4plot$center_freq[data4plot$algorithm=='Vanilla'], nperm=1000, paired=FALSE)
+
+# t = -17.3, p-value = 0.001998
+# mean BIC  15.62796   Van 15.96487  
+
+SDpooled = sqrt((sd(data4plot$center_freq[data4plot$algorithm=='BIC'], na.rm = TRUE)^2 + sd(data4plot$center_freq[data4plot$algorithm=='Vanilla'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(data4plot$center_freq[data4plot$algorithm=='BIC'], na.rm = TRUE) - mean(data4plot$center_freq[data4plot$algorithm=='Vanilla'], na.rm = TRUE)) /SDpooled
+# Cohen_D -0.04903255
+
+ggplot(data4plot, aes(center_freq, color= algorithm, fill=algorithm, alpha=0.5)) +
+  geom_density(aes( color= algorithm, fill=algorithm), alpha= 0.5, bins = 20) +
+  #geom_histogram(aes(y=..density.., color= group, fill=group), alpha= 0.5, bins = 20) +
+  labs(x = "center frequency (Hz)", y = "denstity")  + theme_classic() +
+  ggtitle("") + scale_fill_manual(values=cbbPalette[c(1,3)]) + scale_color_manual(values=cbbPalette[c(1,3)]) 
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_histogram_center_freq_algorithm.pdf', device = "pdf")
+
+ggplot(data4plot, aes(center_freq, color= algorithm, fill=algorithm, alpha=0.5)) +
+  geom_density(aes( color= algorithm, fill=algorithm), alpha= 0.5, bins = 20) +
+  #geom_histogram(aes(y=..density.., color= group, fill=group), alpha= 0.5, bins = 20) +
+  labs(x = "center frequency (Hz)", y = "denstity")  + theme_classic() +
+  ggtitle("") + scale_fill_manual(values=cbbPalette[c(1,3)]) + scale_color_manual(values=cbbPalette[c(1,3)]) + facet_wrap(~age)
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_histogram_center_freq_algorithm_byagegroup.pdf', device = "pdf", width= 12)
+
+p <- ggplot(data4plot, aes(center_freq, color= algorithm, fill=algorithm, alpha=0.5)) +
+  #geom_density(aes( color= algorithm, fill=algorithm), alpha= 0.5, bins = 20) +
+  geom_histogram(aes( color= algorithm, fill=algorithm), alpha= 0.5, bins = 20) +
+  labs(x = "center frequency (Hz)", y = "denstity")  + theme_classic() +
+  ggtitle("") + scale_fill_manual(values=cbbPalette[c(1,3)]) + scale_color_manual(values=cbbPalette[c(1,3)]) + facet_wrap(~age)
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_histogram_center_freq_algorithm_byagegroup_count.pdf', device = "pdf", width= 12)
+
+tt= ggplot_build(p)$data[1]
+
+data4plotdiff=data.frame(y_val= c( tt[[1]]$y[1:20]-tt[[1]]$y[21:40], tt[[1]]$y[41:60]-tt[[1]]$y[61:80], tt[[1]]$y[81:100]-tt[[1]]$y[101:120]), age=rep(c('1.young', '2.adult', '3.older'),each=20), x_vals= tt[[1]]$x, xmin=tt[[1]]$xmin, xmax=tt[[1]]$xmax)
+
+
+ggplot(data4plotdiff, aes(x= x_vals,y=y_val, xmin= xmin, xmax=xmax, ymin=0, ymax=y_val, color= age, fill=age, alpha=0.5)) + geom_rect()+
+  labs(x = "center frequency (Hz)", y = "denstity")  + theme_classic() +
+  ggtitle("") + scale_fill_manual(values=cbbPalette[c(1,2,3)]) + scale_color_manual(values=cbbPalette[c(1,2,3)]) + facet_wrap(~age)
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_histogram_diff_between_groups_center_freq_algorithm_byagegroup_count.pdf', device = "pdf", width= 12)
+
+
+
+
+cbbPalette= c("#4f89e0", "#f5ec6c",'#156605',"#76D7C4","#268236", '#4d3d87','#593d80', '#3b49e3')
+
+
+data4plot=data.frame(center_freq=c(stack(peak_amp_Van)[,1], stack(peak_amp_BIC)[,1]), 
+           algorithm= rep(c('Vanilla', 'BIC'), each=606*888),
+           age= demo$Group, age_raw= demo$Age, subID= demo$CCID)
+
+data4plot$algorithm= factor(data4plot$algorithm, levels = c('Vanilla', 'BIC'))
+data4plot$age= factor(data4plot$age, levels = c('young adult', 'adult', 'older adult'))
+
+
+ggplot(data4plot, aes(center_freq, color= algorithm, fill=algorithm, alpha=0.5)) +
+  geom_density(aes( color= algorithm, fill=algorithm), alpha= 0.5, bins = 20) +
+  #geom_histogram(aes(y=..density.., color= group, fill=group), alpha= 0.5, bins = 20) +
+  labs(x = "amplitude (a.u.)", y = "denstity")  + theme_classic() +
+  ggtitle("") + scale_fill_manual(values=cbbPalette[c(1,3)]) + scale_color_manual(values=cbbPalette[c(1,3)]) 
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_histogram_amplitude_algorithm.pdf', device = "pdf")
+
+RVAideMemoire::perm.t.test(data4plot$center_freq[data4plot$algorithm=='BIC'],data4plot$center_freq[data4plot$algorithm=='Vanilla'], nperm=1000, paired=FALSE)
+
+# t = 88.554, p-value = 0.001998
+# mean BIC 0.4383365  Van 0.3845421 
+
+SDpooled = sqrt((sd(data4plot$center_freq[data4plot$algorithm=='BIC'], na.rm = TRUE)^2 + sd(data4plot$center_freq[data4plot$algorithm=='Vanilla'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(data4plot$center_freq[data4plot$algorithm=='BIC'], na.rm = TRUE) - mean(data4plot$center_freq[data4plot$algorithm=='Vanilla'], na.rm = TRUE)) /SDpooled
+# -0.7498627
+
+roi_index= unlist(lapply(which(indedx_frontal), function(x) (((x-1)*6)+1):(((x-1)*6)+6))) 
+
+data4plot=data.frame(center_freq=c(stack(peak_amp_Van[,roi_index])[,1], stack(peak_amp_BIC[,roi_index])[,1]), 
+           algorithm= rep(c('Vanilla', 'BIC'), each=606*216),
+           age= demo$Group, age_raw= demo$Age, subID= demo$CCID)
+
+data4plot$algorithm= factor(data4plot$algorithm, levels = c('Vanilla', 'BIC'))
+data4plot$age= factor(data4plot$age, levels = c('young adult', 'adult', 'older adult'))
+
+
+ggplot(data4plot, aes(center_freq, color= algorithm, fill=algorithm, alpha=0.5)) +
+  geom_density(aes( color= algorithm, fill=algorithm), alpha= 0.5, bins = 20) +
+  #geom_histogram(aes(y=..density.., color= group, fill=group), alpha= 0.5, bins = 20) +
+  labs(x = "amplitude (a.u.)", y = "denstity")  + theme_classic() +
+  ggtitle("") + scale_fill_manual(values=cbbPalette[c(1,3)]) + scale_color_manual(values=cbbPalette[c(1,3)]) 
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_histogram_amplitude_algorithm.pdf', device = "pdf")
+
+
+
+
+
+data4plot=data.frame(center_freq=c(stack(peak_std_Van)[,1], stack(peak_std_BIC)[,1]), 
+           algorithm= rep(c('Vanilla', 'BIC'), each=606*888),
+           age= demo$Group, age_raw= demo$Age, subID= demo$CCID)
+
+data4plot$algorithm= factor(data4plot$algorithm, levels = c('Vanilla', 'BIC'))
+data4plot$age= factor(data4plot$age, levels = c('young adult', 'adult', 'older adult'))
+
+
+RVAideMemoire::perm.t.test(data4plot$center_freq[data4plot$algorithm=='BIC'],data4plot$center_freq[data4plot$algorithm=='Vanilla'], nperm=1000, paired=FALSE)
+
+# t = 192.28, p-value = 0.001998
+# mean BIC 4.126345   Van 2.743681
+
+SDpooled = sqrt((sd(data4plot$center_freq[data4plot$algorithm=='BIC'], na.rm = TRUE)^2 + sd(data4plot$center_freq[data4plot$algorithm=='Vanilla'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(data4plot$center_freq[data4plot$algorithm=='BIC'], na.rm = TRUE) - mean(data4plot$center_freq[data4plot$algorithm=='Vanilla'], na.rm = TRUE)) /SDpooled
+# 0.5381286
+
+```
+
+
+
+``` {r Simulated data plots}
+
+Simerror=read.csv('~/Documents/FOOOF_BICvsVANILLA/Error_of_param_simulated_004_2025.csv')
+
+data4plot=cbind(stack(Simerror[,1:5]), Simerror[,6])
+colnames(data4plot)[3]= 'algorithm'
+
+data4plot$algorithm= factor(data4plot$algorithm, levels = c('Van', 'BIC'))
+
+ggplot(data4plot, aes(ind, log10(values), fill=algorithm)) + 
+  ggdist::stat_halfeye(adjust = .5, width = .5, .width = 0, justification = -.5, alpha=0.5, point_alpha=0) + 
+  geom_boxplot(width = .2, outlier.shape = NA, colour= '#888888') + ggpubr::theme_classic2() + scale_fill_manual(values=cbbPalette[1:2]) + ylab("parameter error") + coord_cartesian(ylim = c(-3.5, 0.25))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/boxplot_simulated_param,eter_error015.pdf', width=10, height=5,device = "pdf")
+
+
+# run permutation tests on simulated parameters
+# specify the two samples and use lm regression notation to run the tests
+set.seed(1111)
+err= data4plot$values[data4plot$ind== 'err_ap_exp_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+alg= data4plot$algorithm[data4plot$ind== 'err_ap_exp_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+  
+RVAideMemoire::perm.t.test(err~ alg, nperm=1000, paired = FALSE)
+# t = 11.938, p-value = 0.001998
+SDpooled = sqrt((sd(err[alg == 'Van'], na.rm = TRUE)^2 + sd(err[alg == 'BIC'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(err[alg == 'Van'], na.rm = TRUE) - mean(err[alg == 'BIC'], na.rm = TRUE)) /SDpooled
+# Cohen_D = 0.2387651
+
+set.seed(2222)
+err= data4plot$values[data4plot$ind== 'err_ap_off_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+alg= data4plot$algorithm[data4plot$ind== 'err_ap_off_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+  
+RVAideMemoire::perm.t.test(err~ alg, nperm=1000, paired = FALSE)
+# t =  8.1808, p-value = 0.001998
+SDpooled = sqrt((sd(err[alg == 'Van'], na.rm = TRUE)^2 + sd(err[alg == 'BIC'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(err[alg == 'Van'], na.rm = TRUE) - mean(err[alg == 'BIC'], na.rm = TRUE)) /SDpooled
+# Cohen_D =  0.163616
+
+
+set.seed(3333)
+err= data4plot$values[data4plot$ind== 'err_pk_am_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+alg= data4plot$algorithm[data4plot$ind== 'err_pk_am_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+length(alg)
+  
+RVAideMemoire::perm.t.test(err~ alg, nperm=1000, paired = FALSE)
+# t = 10.048, p-value = 0.001998
+SDpooled = sqrt((sd(err[alg == 'Van'], na.rm = TRUE)^2 + sd(err[alg == 'BIC'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(err[alg == 'Van'], na.rm = TRUE) - mean(err[alg == 'BIC'], na.rm = TRUE)) /SDpooled
+# Cohen_D =  0.1478636
+
+
+set.seed(4444)
+err= data4plot$values[data4plot$ind== 'err_pk_sd_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+alg= data4plot$algorithm[data4plot$ind== 'err_pk_sd_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+  
+RVAideMemoire::perm.t.test(err~ alg, nperm=1000, paired = FALSE)
+# t = 12.558, p-value = 0.001998
+SDpooled = sqrt((sd(err[alg == 'Van'], na.rm = TRUE)^2 + sd(err[alg == 'BIC'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(err[alg == 'Van'], na.rm = TRUE) - mean(err[alg == 'BIC'], na.rm = TRUE)) /SDpooled
+# Cohen_D = 0.1846747
+
+set.seed(5555)
+err= data4plot$values[data4plot$ind== 'err_pk_cf_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+alg= data4plot$algorithm[data4plot$ind== 'err_pk_cf_van' & (data4plot$algorithm=='Van' | data4plot$algorithm=='BIC')]
+  
+RVAideMemoire::perm.t.test(err~ alg, nperm=1000, paired = FALSE)
+# t = 14.329, p-value = 0.001998
+SDpooled = sqrt((sd(err[alg == 'Van'], na.rm = TRUE)^2 + sd(err[alg == 'BIC'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(err[alg == 'Van'], na.rm = TRUE) - mean(err[alg == 'BIC'], na.rm = TRUE)) /SDpooled
+# Cohen_D =  0.2106339
+
+
+```
+
+
+
+```{r Plot example spectra fullband }
+
+cbbPalette <- c( '#808080',"#90319D","#E25987","#FFBF00","#3A3AA4", "#31CD71", "#F0792C", "#6C3ABF")
+
+cbbPalette= c("#4f89e0", "#f5ec6c",'#156605',"#76D7C4","#268236", '#4d3d87','#593d80', '#3b49e3')
+
+demo=read.csv('~/Documents/CAMCAN_outputs/CAMCAN_Analysis/standard_data.csv')
+demo2=read.csv('~/Desktop/Xiaobo_age_data/fulldemo_fromCAMCAN_test.csv')
+demo$CCID=paste('sub',demo$CCID, sep = '_')
+ids=read.csv('~/Documents/CAMCAN_outputs/CAMCAN_Analysis/subject_codes.csv')
+index=demo$CCID %in% ids$Ids
+demo=demo[index,]
+
+demo$Group[demo$Age>=18 & demo$Age <45]= "young adult"
+demo$Group[demo$Age>=45 & demo$Age <65]= "adult"
+demo$Group[demo$Age>=65 & demo$Age <90]= "older adult"
+
+# read data and compute data for demographic table
+data=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/PSD_BICREV.csv', header = FALSE)
+aperiodic_fit=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_BICREV.csv', header = FALSE)
+periodic_fit=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/periodic_BICREV.csv', header = FALSE)
+fpsd=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fittedspectra_BICREV.csv', header = FALSE)
+
+
+roi_index= (79*(56-1)+1):(79*(56-1)+79)
+
+PSD= data[525,roi_index]
+aperiodic= aperiodic_fit[525,roi_index]
+periodic= periodic_fit[525,roi_index]
+fooof= fpsd[525,roi_index]
+
+target_LSP= rbind( stack(PSD), stack(aperiodic), stack(fooof))
+target_LSP$Group = rep(c('PSD', 'aperiodic', 'specparam'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Spectrum_participant_525_ROI_G postcentral_BIC.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+target_LSP= rbind( stack(periodic))
+target_LSP$Group = rep(c('periodic'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Periodic_fit_participant_525_ROI_G postcentral_BIC.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+# plot another example 
+
+roi_index= (6*(56-1)+1):(6*(56-1)+6)
+
+peak_cf_BIC[565, roi_index]
+peak_amp_BIC[565, roi_index]
+peak_std_BIC[565, roi_index]
+
+G1= 0.6246131*exp((-1*((seq(1,40,1/2) - 23.66973)^2))/(2*(6.516438^2)))
+
+roi_index= (79*(56-1)+1):(79*(56-1)+79)
+
+PSD= data[565,roi_index]
+aperiodic= aperiodic_fit[565,roi_index]
+periodic= periodic_fit[565,roi_index]
+fooof= fpsd[565,roi_index]
+
+plot(G1)
+plot(log10(unlist(array(periodic[1,]))))
+
+target_LSP= rbind( stack(PSD), stack(aperiodic), stack(fooof))
+target_LSP$Group = rep(c('PSD', 'aperiodic', 'specparam'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) + geom_ribbon(data= target_LSP, aes(ymin = rep(log10(unlist(array(aperiodic[1,]))),3), ymax = rep(log10(unlist(array(aperiodic[1,])))+(G1),3)), color = 'white',fill = "blue", alpha = .5) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40)) 
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) + geom_ribbon(data= target_LSP, aes(ymin = rep(log10(unlist(array(aperiodic[1,]))),3), ymax = rep(log10(unlist(array(aperiodic[1,])))+G1,3)), color = 'white',fill = "blue", alpha = .5) + geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40)) 
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Spectrum_participant_565_ROI_G postcentral_BIC_NEW222.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+
+
+data=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/PSD_VanREV.csv', header = FALSE)
+aperiodic_fit=read.csv('/Users/jason/Documents/FOOOF_BICvsVANILLA/outputs/aperioidc_VanREV.csv', header = FALSE)
+periodic_fit=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/perioidc_VanREV.csv', header = FALSE)
+fit_psd=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fittedspectra_VanREV.csv', header = FALSE)
+
+
+roi_index= (79*(56-1)+1):(79*(56-1)+79)
+
+PSD= data[525,roi_index]
+aperiodic= aperiodic_fit[525,roi_index]
+periodic= periodic_fit[525,roi_index]
+fooof= fit_psd[525,roi_index]
+
+target_LSP= rbind( stack(PSD), stack(aperiodic), stack(fooof))
+target_LSP$Group = rep(c('PSD', 'aperiodic', 'specparam'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Spectrum_participant_525_ROI_G postcentral_Van.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+target_LSP= rbind( stack(periodic))
+target_LSP$Group = rep(c('periodic'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Periodic_fit_participant_525_ROI_G postcentral_Van.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+
+# plot another example 
+roi_index= (6*(56-1)+1):(6*(56-1)+6)
+
+peak_cf_Van[565, roi_index]
+peak_amp_Van[565, roi_index]
+peak_std_Van[565, roi_index]
+
+G1= 0.5088962*exp((-1*((seq(1,40,1/2) - 25.32713)^2))/(2*(1.915773^2)))
+G2= 0.247761*exp((-1*((seq(1,40,1/2) - 21.54842)^2))/(2*(1.387259^2)))
+G3= 0.08912514*exp((-1*((seq(1,40,1/2) - 15.90312)^2))/(2*(0.8142442^2)))
+G4= 0.2222138*exp((-1*((seq(1,40,1/2) - 30.12208)^2))/(2*(1.728388^2)))
+G5= 0.3196856*exp((-1*((seq(1,40,1/2) - 18.6214)^2))/(2*(2.47648^2)))
+
+roi_index= (79*(56-1)+1):(79*(56-1)+79)
+
+PSD= data[565,roi_index]
+aperiodic= aperiodic_fit[565,roi_index]
+periodic= periodic_fit[565,roi_index]
+fooof= fit_psd[565,roi_index]
+
+target_LSP= rbind( stack(PSD), stack(aperiodic), stack(fooof))
+target_LSP$Group = rep(c('PSD', 'aperiodic', 'specparam'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) + geom_ribbon(data= target_LSP, aes(ymin = rep(log10(unlist(array(aperiodic[1,]))),3), ymax = rep(log10(unlist(array(aperiodic[1,])))+(G1+G2+G3+G4+G5),3)), color = 'white',fill = "blue", alpha = .5)  + geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40)) 
+
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) + geom_ribbon(data= target_LSP, aes(ymin = rep(log10(unlist(array(aperiodic[1,]))),3), ymax = rep(log10(unlist(array(aperiodic[1,])))+G1,3)), color = 'white',fill = "blue", alpha = .5) + geom_ribbon(data= target_LSP, aes(ymin = rep(log10(unlist(array(aperiodic[1,]))),3), ymax = rep(log10(unlist(array(aperiodic[1,])))+G2,3)), color = 'white',fill = "blue", alpha = .5) + geom_ribbon(data= target_LSP, aes(ymin = rep(log10(unlist(array(aperiodic[1,]))),3), ymax = rep(log10(unlist(array(aperiodic[1,])))+G3,3)), color = 'white',fill = "blue", alpha = .5)+ geom_ribbon(data= target_LSP, aes(ymin = rep(log10(unlist(array(aperiodic[1,]))),3), ymax = rep(log10(unlist(array(aperiodic[1,])))+G4,3)), color = 'white',fill = "blue", alpha = .5)+ geom_ribbon(data= target_LSP, aes(ymin = rep(log10(unlist(array(aperiodic[1,]))),3), ymax = rep(log10(unlist(array(aperiodic[1,])))+G5,3)), color = 'white',fill = "blue", alpha = .5) + geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40)) 
+
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Spectrum_participant_565_ROI_G postcentral_Van_NEW222.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+target_LSP= rbind( stack(periodic))
+target_LSP$Group = rep(c('periodic'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/Periodic_fit_participant_565_ROI_G postcentral_Van.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+
+
+# plot another example 
+
+roi_index= (79*(32-1)+1):(79*(32-1)+79)
+
+PSD= data[539,roi_index]
+aperiodic= aperiodic_fit[539,roi_index]
+periodic= periodic_fit[539,roi_index]
+
+target_LSP= rbind( stack(PSD), stack(aperiodic))
+target_LSP$Group = rep(c('PSD', 'aperiodic'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/Spectrum_participant_539_ROI_frontal_middle_Van.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+target_LSP= rbind( stack(periodic))
+target_LSP$Group = rep(c('periodic'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/Periodic_fit_participant_539_ROI_frontal_middle_Van.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+
+# plot another example 
+
+roi_index= (79*(32-1)+1):(79*(32-1)+79)
+
+PSD= data[483,roi_index]
+aperiodic= aperiodic_fit[483,roi_index]
+periodic= periodic_fit[483,roi_index]
+
+target_LSP= rbind( stack(PSD), stack(aperiodic))
+target_LSP$Group = rep(c('PSD', 'aperiodic'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/Spectrum_participant_483_ROI_frontal_middle_Van.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+target_LSP= rbind( stack(periodic))
+target_LSP$Group = rep(c('periodic'), each=79)
+
+target_LSP$ind = plyr::mapvalues(target_LSP$ind , unique(target_LSP$ind ), seq(1,40,1/2))
+target_LSP$ind= as.numeric(as.character(target_LSP$ind))
+
+target_LSP$values= log10(target_LSP$values)
+
+ggplot(target_LSP, aes(x= ind, y = values, fill= Group, colour= Group)) +  geom_line() + theme_classic2() +  coord_cartesian(xlim = c(1, 40))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/Periodic_fit_participant_483_ROI_frontal_middle_Van.pdf', device = "pdf", width=10, height=5, dpi=800)
+
+
+```
+
+
+1. plot new fmse
+3. ppv and sens for close peaks 
+4. need to run spatial permutation on topographies
+5. replot Figure 4b change colour bar 
+
+
+
+
+``` {r Peak proximity simulations}
+
+library(dplyr)
+
+data=read.csv('~/Documents/FOOOF_BICvsVANILLA/fixed_algo/Figure2_004/pk_values_004.csv')
+error_ap = read.csv('~/Documents/FOOOF_BICvsVANILLA/fixed_algo/Figure2_004/err_ap.csv')
+
+data$Vanerror_expon = plyr::mapvalues(data$tru_sim, 1:5000, error_ap$exponent)
+data$Vanerror_offset = plyr::mapvalues(data$tru_sim, 1:5000, error_ap$offset)
+
+BICerror_ap = read.csv('~/Documents/FOOOF_BICvsVANILLA/fixed_algo/Figure2_004/err_ap_BIC.csv')
+
+data$BICerror_expon = plyr::mapvalues(data$tru_sim, 1:5000, BICerror_ap$exponent)
+data$BICerror_offset = plyr::mapvalues(data$tru_sim, 1:5000, BICerror_ap$offset)
+
+BIC_peaks = read.csv('~/Documents/FOOOF_BICvsVANILLA/fixed_algo/Figure2_004/bic_values.csv')
+Van_peaks = read.csv('~/Documents/FOOOF_BICvsVANILLA/fixed_algo/Figure2_004/van_values.csv')
+
+peak_params = read.csv('~/Documents/FOOOF_BICvsVANILLA/fixed_algo/Figure2_004/err_pk.csv')
+data$Vanerror_peaks_cf[!is.na(data$Van)] = peak_params$cf
+data$Vanerror_peaks_amp[!is.na(data$Van)] = peak_params$amp
+data$Vanerror_peaks_sd[!is.na(data$Van)] = peak_params$sd
+
+BICpeak_params = read.csv('~/Documents/FOOOF_BICvsVANILLA/fixed_algo/Figure2_004/err_pk_BIC.csv')
+data$BICerror_peaks_cf[!is.na(data$MS)] = BICpeak_params$cf
+data$BICerror_peaks_amp[!is.na(data$MS)] = BICpeak_params$amp
+data$BICerror_peaks_sd[!is.na(data$MS)] = BICpeak_params$sd
+
+data=data %>% group_by(tru_sim) %>% mutate(range_cf = max(tru_cf)-min(tru_cf))
+data=data %>% group_by(tru_sim) %>% mutate(sd_cf = sd(tru_cf))
+data=data %>% group_by(tru_sim) %>% mutate(No_peak = n())
+data=data %>% group_by(tru_sim) %>% mutate(BIC_peaksRec = sum(tru_sim == BIC_peaks$bic_sim))
+data=data %>% group_by(tru_sim) %>% mutate(Van_peaksRec = sum(tru_sim == Van_peaks$van_sim))
+data$BIC_peaksRec[duplicated(data$tru_sim)] = NaN
+data$Van_peaksRec[duplicated(data$tru_sim)] = NaN
+data=data%>% group_by(No_peak) %>%
+    mutate(quantile = ntile(range_cf, 4))
+
+test=data%>% group_by(No_peak) %>% summarise(sensitivityVan = (sum(!is.na(Van)))/n(), sensitivityMS = (sum(!is.na(MS)))/n(), ppvVanNum= (sum(!is.na(Van)))/sum(Van_peaksRec, na.rm = TRUE), ppvBIC= (sum(!is.na(MS)))/ sum(BIC_peaksRec, na.rm = TRUE))
+
+test=data%>% group_by(No_peak, quantile) %>% summarise(sensitivityVan = (sum(!is.na(Van)))/n(), sensitivityMS = (sum(!is.na(MS)))/n(), ppvVanNum= (sum(!is.na(Van)))/sum(Van_peaksRec, na.rm = TRUE), ppvBIC= (sum(!is.na(MS)))/ sum(BIC_peaksRec, na.rm = TRUE), mean_range= mean(range_cf), ntrials= n())
+
+test$No_peak = factor(test$No_peak, levels = c(1,2,3,4))
+ggplot(test, aes(quantile, sensitivityVan, colour= No_peak, fill= No_peak, group= No_peak)) + geom_point(size=6, colour= "white")+ geom_point(size=4) + geom_line(size=1.25, linetype = 'dotted') + ggpubr::theme_classic2()   + theme(axis.text.x = element_text(size=14), axis.title.y = element_text(size=14), axis.text.y = element_text(size=14), axis.title.x = element_text(size=14)) + xlab("quantile distance between peaks") + ylab("sensitivity") + scale_fill_manual(values=c('#b1c6e6','#91b6ed', '#4f89e0', '#1760cf')) + scale_colour_manual(values=c('#b1c6e6','#91b6ed', '#4f89e0', '#1760cf')) + coord_cartesian(ylim = c(0.70, 1))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/Sensitivity_by_quantile_Van.pdf', device = "pdf", width=6, height=5, dpi=800)
+
+ggplot(test, aes(quantile, sensitivityMS, colour= No_peak, fill= No_peak, group= No_peak)) + geom_point(size=6, colour= "white")+ geom_point(size=4) + geom_line(size=1.25, linetype = 'dotted') + ggpubr::theme_classic2()   + theme(axis.text.x = element_text(size=14), axis.title.y = element_text(size=14), axis.text.y = element_text(size=14), axis.title.x = element_text(size=14)) + xlab("quantile distance between peaks") + ylab("sensitivity") + scale_fill_manual(values=c('#71bf62','#48a635', '#156605', '#0b3303')) + scale_colour_manual(values=c('#71bf62','#48a635', '#156605', '#0b3303'))   + coord_cartesian(ylim = c(0.70, 1))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/Sensitivity_by_quantile_MS.pdf', device = "pdf", width=6, height=5, dpi=800)
+
+ggplot(test, aes(quantile, ppvVanNum, colour= No_peak, fill= No_peak, group= No_peak)) + geom_point(size=6, colour= "white")+ geom_point(size=4) + geom_line(size=1.25, linetype = 'dotted') + ggpubr::theme_classic2()   + theme(axis.text.x = element_text(size=14), axis.title.y = element_text(size=14), axis.text.y = element_text(size=14), axis.title.x = element_text(size=14)) + xlab("quantile distance between peaks") + ylab("Positive predictive value") + scale_fill_manual(values=c('#b1c6e6','#91b6ed', '#4f89e0', '#1760cf')) + scale_colour_manual(values=c('#b1c6e6','#91b6ed', '#4f89e0', '#1760cf')) + coord_cartesian(ylim = c(0.350, 1))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/PV_by_quantile_Van.pdf', device = "pdf", width=6, height=5, dpi=800)
+
+ggplot(test, aes(quantile, ppvBIC, colour= No_peak, fill= No_peak, group= No_peak)) + geom_point(size=6, colour= "white")+ geom_point(size=4) + geom_line(size=1.25, linetype = 'dotted') + ggpubr::theme_classic2()   + theme(axis.text.x = element_text(size=14), axis.title.y = element_text(size=14), axis.text.y = element_text(size=14), axis.title.x = element_text(size=14)) + xlab("quantile distance between peaks") + ylab("Positive predictive value") + scale_fill_manual(values=c('#71bf62','#48a635', '#156605', '#0b3303')) + scale_colour_manual(values=c('#71bf62','#48a635', '#156605', '#0b3303'))   + coord_cartesian(ylim = c(0.350, 1))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/PPV_by_quantile_MS.pdf', device = "pdf", width=6, height=5, dpi=800)
+
+
+data=data%>% group_by(No_peak) %>%
+      mutate(quantileAmp = ntile(tru_amp, 4))
+test=data%>% group_by(No_peak, quantileAmp) %>% summarise(sensitivityVan = (sum(!is.na(Van)))/n(), sensitivityMS = (sum(!is.na(MS)))/n(), ppvVanNum= (sum(!is.na(Van)))/sum(Van_peaksRec, na.rm = TRUE), ppvBIC= (sum(!is.na(MS)))/ sum(BIC_peaksRec, na.rm = TRUE), mean_range= mean(tru_amp), ntrials= n())
+
+
+test$quantileAmp = factor(test$quantileAmp, levels = c(1,2,3,4))
+test$No_peak = factor(test$No_peak, levels = c(1,2,3,4))
+ggplot(test, aes(quantileAmp, sensitivityVan, colour= No_peak, fill= No_peak, group= No_peak)) + geom_point(size=6, colour= "white")+ geom_point(size=4) + geom_line(size=1.25, linetype = 'dotted') + ggpubr::theme_classic2()   + theme(axis.text.x = element_text(size=14), axis.title.y = element_text(size=14), axis.text.y = element_text(size=14), axis.title.x = element_text(size=14)) + xlab("amplitude of peak") + ylab("sensitivity") + scale_fill_manual(values=c('#b1c6e6','#91b6ed', '#4f89e0', '#1760cf')) + scale_colour_manual(values=c('#b1c6e6','#91b6ed', '#4f89e0', '#1760cf')) + coord_cartesian(ylim = c(0.35, 1))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/Sensitivity_by_quantile_Amplitude_Van22.pdf', device = "pdf", width=6, height=5, dpi=800)
+
+ggplot(test, aes(quantileAmp, sensitivityMS, colour= No_peak, fill= No_peak, group= No_peak)) + geom_point(size=6, colour= "white")+ geom_point(size=4) + geom_line(size=1.25, linetype = 'dotted') + ggpubr::theme_classic2()   + theme(axis.text.x = element_text(size=14), axis.title.y = element_text(size=14), axis.text.y = element_text(size=14), axis.title.x = element_text(size=14)) + xlab("amplitude of peak") + ylab("sensitivity") + scale_fill_manual(values=c('#71bf62','#48a635', '#156605', '#0b3303')) + scale_colour_manual(values=c('#71bf62','#48a635', '#156605', '#0b3303'))   + coord_cartesian(ylim = c(0.35, 1)) 
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/Sensitivity_by_quantile_Amplitude_MS22.pdf', device = "pdf", width=6, height=5, dpi=800)
+
+
+
+
+DescTools::SpearmanRho(data$Vanerror_expon[data$No_peak==2], data$sd_cf[data$No_peak==2], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$Vanerror_expon[data$No_peak==3], data$sd_cf[data$No_peak==3], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$Vanerror_expon[data$No_peak==4], data$sd_cf[data$No_peak==4], use = c("complete.obs"), conf.level = 0.95)
+
+DescTools::SpearmanRho(data$Vanerror_offset[data$No_peak==2], data$sd_cf[data$No_peak==2], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$Vanerror_offset[data$No_peak==3], data$sd_cf[data$No_peak==3], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$Vanerror_offset[data$No_peak==4], data$sd_cf[data$No_peak==4], use = c("complete.obs"), conf.level = 0.95)
+
+DescTools::SpearmanRho(data$BICerror_expon[data$No_peak==2], data$sd_cf[data$No_peak==2], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$BICerror_expon[data$No_peak==3], data$sd_cf[data$No_peak==3], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$BICerror_expon[data$No_peak==4], data$sd_cf[data$No_peak==4], use = c("complete.obs"), conf.level = 0.95)
+
+DescTools::SpearmanRho(data$BICerror_offset[data$No_peak==2], data$sd_cf[data$No_peak==2], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$BICerror_offset[data$No_peak==3], data$sd_cf[data$No_peak==3], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$BICerror_offset[data$No_peak==4], data$sd_cf[data$No_peak==4], use = c("complete.obs"), conf.level = 0.95)
+
+DescTools::SpearmanRho(data$BICerror_peaks_cf[data$No_peak==2], data$sd_cf[data$No_peak==2], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$BICerror_peaks_cf[data$No_peak==3], data$sd_cf[data$No_peak==3], use = c("complete.obs"), conf.level = 0.95)
+DescTools::SpearmanRho(data$BICerror_peaks_cf[data$No_peak==4], data$sd_cf[data$No_peak==4], use = c("complete.obs"), conf.level = 0.95)
+
+
+
+```
+
+
+```{r plot fmse reviewer }
+
+library(ggplot2)
+library(dplyr)
+library(colorspace)
+library(ggseg)
+library(ggsegDesterieux)
+
+cbbPalette= c("#4f89e0", "#f5ec6c",'#156605',"#76D7C4","#268236", '#4d3d87','#593d80', '#3b49e3')
+
+# pool together demographics from all parts
+demo=read.csv('~/Documents/CAMCAN_outputs/CAMCAN_Analysis/standard_data.csv')
+demo2=read.csv('~/Desktop/Xiaobo_age_data/fulldemo_fromCAMCAN_test.csv')
+demo$CCID=paste('sub',demo$CCID, sep = '_')
+ids=read.csv('~/Documents/CAMCAN_outputs/CAMCAN_Analysis/subject_codes.csv')
+index=demo$CCID %in% ids$Ids
+demo=demo[index,]
+
+demo$Group[demo$Age>=18 & demo$Age <45]= "young adult"
+demo$Group[demo$Age>=45 & demo$Age <65]= "adult"
+demo$Group[demo$Age>=65 & demo$Age <90]= "older adult"
+
+full_demo=read.csv('~/Documents/CAMCAN_outputs/approved_data.csv')
+full_demo$CCID=paste('sub',full_demo$CCID, sep = '_')
+index=full_demo$CCID %in% ids$Ids
+full_demo=full_demo[index,]
+
+# read in csv of slopes for each hyperparameter setting
+exponent_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_exponent_VanREV_range.csv', header = FALSE)
+exponent_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_exponent_BICREV_range.csv', header = FALSE)
+
+# read in csv of offset
+offset_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_offset_VanREV_range.csv', header = FALSE)
+offset_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_offset_BICREV_range.csv', header = FALSE)
+
+# avg MSE of spectral model fit
+MSE_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fit_mse_VanREV_range.csv', header = FALSE)
+MSE_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fit_mse_BICREV_range.csv', header = FALSE)
+BF_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/BF_BICREV_range.csv', header = FALSE)
+
+# organized atlas info (summary of ROI)
+atlas= read.csv('~/Desktop/Xiaobo_age_data/Destrieux_atlas.csv')
+
+fmse_Van=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fmse_mean_VanREV_range.csv', header = FALSE)
+fmse_BIC=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fmse_mean_BICREV_range.csv', header = FALSE)
+
+stderror <- function(x) sd(x)/sqrt(length(x))
+
+data4plot= data.frame(fmse= c(colMeans(fmse_Van),colMeans(fmse_BIC)), sd_fmse= c(1.96*apply(fmse_Van, 2, stderror),1.96*apply(fmse_BIC, 2, stderror)),
+                      algorithm= factor(x = rep(c('Vanilla', 'BIC'), each=83), levels = c('Vanilla', 'BIC')), freq=  seq(4,45,0.5))
+
+
+ggplot(data4plot, aes(x= freq, y = fmse, fill= algorithm,colour= algorithm, ymin=fmse-sd_fmse, ymax=fmse+sd_fmse)) + geom_ribbon(alpha=0.5, colour= NA) + geom_line() + ggpubr::theme_classic2() + coord_cartesian(xlim = c(4, 45) ) + scale_fill_manual(values=cbbPalette[c(1,3)]) + scale_color_manual(values=cbbPalette[c(1,3)])
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_FMSE_plot_new_bounds.pdf', device = "pdf")
+
+
+
+someData3= tidyr::tibble(atlas$region, colMeans(MSE_Van), atlas$hemi, 'Vanilla')
+someData2= tidyr::tibble(atlas$region, colMeans(MSE_BIC), atlas$hemi, 'BIC')
+colnames(someData2)= c('region', 'MSE', 'hemi', 'algorithm')
+colnames(someData3)= c('region', 'MSE', 'hemi', 'algorithm')
+someData3=rbind(someData3, someData2)
+someData3= someData3[!is.na(someData3$algorithm),]
+someData3$algorithm= factor(someData3$algorithm, levels = c(NA,'Vanilla', 'BIC'))
+someData3$region= factor(someData3$region)
+
+someData3 %>%
+  group_by(algorithm) %>% 
+  brain_join(desterieux) %>% 
+  reposition_brain(hemi ~ side) %>% 
+  ggplot(aes(fill =MSE)) + 
+  geom_sf(show.legend = TRUE) + 
+  facet_wrap( ~ algorithm) +  scale_fill_continuous_sequential(palette= 'Sunset', rev= FALSE) +  scale_color_continuous_sequential(palette= 'Sunset', rev= FALSE) +
+  theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Brain_map_MSE_compare_range.pdf', device = "pdf")
+
+
+
+# box plots of MSE model fit
+data4plot= data.frame(MSE= c(rowMeans(MSE_Van), rowMeans(MSE_BIC)),
+                      algorithm= factor(x = rep(c('liberal','ms-'), each=606), levels = c('liberal', 'ms-')) , age= factor(demo$Group, c('young adult', 'adult', 'older adult')), age_raw= demo$Age)
+
+
+ggplot(data4plot, aes(algorithm, MSE, fill=algorithm)) + 
+  ggdist::stat_halfeye(adjust = .5, width = .5, .width = 0, justification = -.5, alpha=0.5, point_alpha= 0) + 
+  geom_boxplot(width = .2, outlier.shape = NA, outlier.size = 0.001, colour= '#888888') + ggpubr::theme_classic2() + scale_fill_manual(values=cbbPalette[c(1,3)]) + coord_cartesian(ylim = c(0, 0.008))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_boxplot_MSE_compare_range.pdf', device = "pdf")
+
+
+RVAideMemoire::perm.t.test(rowMeans(MSE_BIC),rowMeans(MSE_Van), nperm=1000)
+
+RVAideMemoire::perm.t.test(data4plot$MSE[data4plot$algorithm=='ms-'],data4plot$MSE[data4plot$algorithm=='liberal'], nperm=1000, paired=TRUE)
+
+# t = -37.992, p-value = 0.001998
+
+```
+
+
+
+```{r plot fmse reviewer 2nd range }
+
+library(ggplot2)
+library(dplyr)
+library(colorspace)
+library(ggseg)
+library(ggsegDesterieux)
+
+cbbPalette= c("#4f89e0", "#f5ec6c",'#156605',"#76D7C4","#268236", '#4d3d87','#593d80', '#3b49e3')
+
+# pool together demographics from all parts
+demo=read.csv('~/Documents/CAMCAN_outputs/CAMCAN_Analysis/standard_data.csv')
+demo2=read.csv('~/Desktop/Xiaobo_age_data/fulldemo_fromCAMCAN_test.csv')
+demo$CCID=paste('sub',demo$CCID, sep = '_')
+ids=read.csv('~/Documents/CAMCAN_outputs/CAMCAN_Analysis/subject_codes.csv')
+index=demo$CCID %in% ids$Ids
+demo=demo[index,]
+
+demo$Group[demo$Age>=18 & demo$Age <45]= "young adult"
+demo$Group[demo$Age>=45 & demo$Age <65]= "adult"
+demo$Group[demo$Age>=65 & demo$Age <90]= "older adult"
+
+full_demo=read.csv('~/Documents/CAMCAN_outputs/approved_data.csv')
+full_demo$CCID=paste('sub',full_demo$CCID, sep = '_')
+index=full_demo$CCID %in% ids$Ids
+full_demo=full_demo[index,]
+
+# read in csv of slopes for each hyperparameter setting
+exponent_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_exponent_VanREV111.csv', header = FALSE)
+exponent_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_exponent_BICREV111.csv', header = FALSE)
+
+# read in csv of offset
+offset_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_offset_VanREV111.csv', header = FALSE)
+offset_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/aperiodic_offset_BICREV111.csv', header = FALSE)
+
+# avg MSE of spectral model fit
+MSE_Van= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fit_mse_VanREV111.csv', header = FALSE)
+MSE_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fit_mse_BICREV111.csv', header = FALSE)
+BF_BIC= read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/BF_BICREV111.csv', header = FALSE)
+
+# organized atlas info (summary of ROI)
+atlas= read.csv('~/Desktop/Xiaobo_age_data/Destrieux_atlas.csv')
+
+fmse_Van=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fmse_mean_VanREV111.csv', header = FALSE)
+fmse_BIC=read.csv('~/Documents/FOOOF_BICvsVANILLA/outputs/fmse_mean_BICREV111.csv', header = FALSE)
+
+stderror <- function(x) sd(x)/sqrt(length(x))
+
+data4plot= data.frame(fmse= c(colMeans(fmse_Van),colMeans(fmse_BIC)), sd_fmse= c(1.96*apply(fmse_Van, 2, stderror),1.96*apply(fmse_BIC, 2, stderror)),
+                      algorithm= factor(x = rep(c('Vanilla', 'BIC'), each=89), levels = c('Vanilla', 'BIC')), freq=  seq(1,45,0.5))
+
+
+ggplot(data4plot, aes(x= freq, y = fmse, fill= algorithm,colour= algorithm, ymin=fmse-sd_fmse, ymax=fmse+sd_fmse)) + geom_ribbon(alpha=0.5, colour= NA) + geom_line() + ggpubr::theme_classic2() + coord_cartesian(xlim = c(1, 45) ) + scale_fill_manual(values=cbbPalette[c(1,3)]) + scale_color_manual(values=cbbPalette[c(1,3)])
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_FMSE_plot_new_bounds111.pdf', device = "pdf")
+
+
+
+someData3= tidyr::tibble(atlas$region, colMeans(MSE_Van), atlas$hemi, 'Vanilla')
+someData2= tidyr::tibble(atlas$region, colMeans(MSE_BIC), atlas$hemi, 'BIC')
+colnames(someData2)= c('region', 'MSE', 'hemi', 'algorithm')
+colnames(someData3)= c('region', 'MSE', 'hemi', 'algorithm')
+someData3=rbind(someData3, someData2)
+someData3= someData3[!is.na(someData3$algorithm),]
+someData3$algorithm= factor(someData3$algorithm, levels = c(NA,'Vanilla', 'BIC'))
+someData3$region= factor(someData3$region)
+
+someData3 %>%
+  group_by(algorithm) %>% 
+  brain_join(desterieux) %>% 
+  reposition_brain(hemi ~ side) %>% 
+  ggplot(aes(fill =MSE)) + 
+  geom_sf(show.legend = TRUE) + 
+  facet_wrap( ~ algorithm) +  scale_fill_continuous_sequential(palette= 'Sunset', rev= FALSE) +  scale_color_continuous_sequential(palette= 'Sunset', rev= FALSE) +
+  theme_void() + scale_color_manual('white')
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_Brain_map_MSE_compare_range111.pdf', device = "pdf")
+
+
+
+# box plots of MSE model fit
+data4plot= data.frame(MSE= c(rowMeans(MSE_Van), rowMeans(MSE_BIC)),
+                      algorithm= factor(x = rep(c('liberal','ms-'), each=606), levels = c('liberal', 'ms-')) , age= factor(demo$Group, c('young adult', 'adult', 'older adult')), age_raw= demo$Age)
+
+
+ggplot(data4plot, aes(algorithm, MSE, fill=algorithm)) + 
+  ggdist::stat_halfeye(adjust = .5, width = .5, .width = 0, justification = -.5, alpha=0.5, point_alpha= 0) + 
+  geom_boxplot(width = .2, outlier.shape = NA, outlier.size = 0.001, colour= '#888888') + ggpubr::theme_classic2() + scale_fill_manual(values=cbbPalette[c(1,3)]) + coord_cartesian(ylim = c(0, 0.008))
+
+ggsave('~/Documents/FOOOF_BICvsVANILLA/figures/REVIEW_boxplot_MSE_compare_range111.pdf', device = "pdf")
+
+
+RVAideMemoire::perm.t.test(rowMeans(MSE_BIC),rowMeans(MSE_Van), nperm=1000)
+
+RVAideMemoire::perm.t.test(data4plot$MSE[data4plot$algorithm=='ms-'],data4plot$MSE[data4plot$algorithm=='liberal'], nperm=1000, paired=TRUE)
+# t = -37.867, p-value = 0.001998
+# t = -42.6, p-value = 0.001998
+
+SDpooled = sqrt((sd(data4plot$MSE[data4plot$algorithm=='ms-'], na.rm = TRUE)^2 + sd(data4plot$MSE[data4plot$algorithm=='liberal'], na.rm = TRUE)^2)/2)
+Cohen_D = (mean(data4plot$MSE[data4plot$algorithm=='ms-'], na.rm = TRUE) - mean(data4plot$MSE[data4plot$algorithm=='liberal'], na.rm = TRUE)) /SDpooled
+# -1.734408
+# -1.619357
+
+```
