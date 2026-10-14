@@ -132,7 +132,7 @@ class FOOOF_MS(FOOOF):
             self.fooofed_spectrum_ = self._ap_fit + self._peak_fit
 
             # Step 3h: Estimate BIC, update best model if appropriate
-            bic = compute_bic(self.power_spectrum, self.fooofed_spectrum_, len(model_params))
+            bic = compute_bic(self.power_spectrum, self.fooofed_spectrum_, len(model_params)+1)
             bic_values.append(bic)
 
             if bic < best_bic:
